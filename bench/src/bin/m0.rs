@@ -137,9 +137,12 @@ fn main() -> Result<()> {
             let dest = args.workdir.join("wt").join(format!("{}-{run}", r.name));
             remove_worktree(&src, &dest)?;
 
+            // Parallel checkout (`checkout.workers=0` = one worker per CPU): we compare
+            // against the fastest plain Git, not its single-threaded default.
             let mut phases: Vec<(&'static str, Command)> = vec![("worktree_add", {
                 let mut c = git();
-                c.arg("-C").arg(&src).args(["worktree", "add", "--quiet", "--detach"]);
+                c.args(["-c", "checkout.workers=0", "-C"]).arg(&src);
+                c.args(["worktree", "add", "--quiet", "--detach"]);
                 c.arg(&dest).arg(&r.commit).current_dir(&args.workdir);
                 c
             })];

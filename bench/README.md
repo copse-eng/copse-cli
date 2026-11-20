@@ -6,7 +6,7 @@ Timing harness for copse. Kept separate from `cli/tests/`: the tests check corre
 
 Times each phase of making a usable workspace with plain Git:
 
-1. `git worktree add` (detached, at a pinned commit)
+1. `git worktree add` (detached, at a pinned commit) with parallel checkout (`-c checkout.workers=0`, one worker per CPU). This is the fastest plain Git can do, and copse only matters if it beats it.
 2. dependency install (`pnpm install`, `cargo fetch`, ...)
 3. build
 4. `git status` on the result
