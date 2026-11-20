@@ -1,0 +1,2 @@
+[alias]
+m0 = "run -p copse-bench --release --bin m0 --"

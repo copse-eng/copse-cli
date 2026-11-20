@@ -1,0 +1,33 @@
+# Target repos for the M0 baseline. Commits are pinned so runs stay comparable.
+# Bump them on purpose, never silently.
+
+[[repo]]
+name = "ripgrep"
+note = "Small smoke test. Use this to check the harness before the long runs."
+url = "https://github.com/BurntSushi/ripgrep.git"
+commit = "fdf7d95485ec69c599418b7e7154baa4518fed2c"
+install = "cargo fetch"
+build = "cargo build"
+
+[[repo]]
+name = "vite"
+note = "JS/TS monorepo (pnpm). Heavy node_modules."
+url = "https://github.com/vitejs/vite.git"
+commit = "ef295d54d56478437112acd7deeb9821d755b90f"
+install = "pnpm install --frozen-lockfile"
+build = "pnpm run build"
+
+[[repo]]
+name = "nushell"
+note = "Rust workspace with a heavy target/."
+url = "https://github.com/nushell/nushell.git"
+commit = "16817a88f38bb62f86c05a128188904e2f1fed0d"
+install = "cargo fetch"
+build = "cargo build"
+
+[[repo]]
+name = "linux"
+note = "Checkout-only stress test: ~90k tracked files. Times worktree add + status, no build."
+url = "https://github.com/torvalds/linux.git"
+commit = "65e4fd942f72a9dba0e4e257290c4fa1aa756854"
+shallow = true
