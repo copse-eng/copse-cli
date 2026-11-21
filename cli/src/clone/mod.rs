@@ -142,7 +142,13 @@ pub fn clone_tree(
         } else {
             // On Windows this comes from the directory listing: no extra open per file.
             let m = entry.metadata().with_context(|| format!("reading {}", entry.path().display()))?;
-            files.push(FileEntry { rel, len: m.len(), mtime: m.modified()?, readonly: m.permissions().readonly() });
+            files.push(FileEntry {
+                rel,
+                len: m.len(),
+                mtime: m.modified()?,
+                created: m.created().ok(),
+                readonly: m.permissions().readonly(),
+            });
         }
     }
 
@@ -198,14 +204,17 @@ struct FileEntry {
     rel: PathBuf,
     len: u64,
     mtime: SystemTime,
+    /// Creation time. Git for Windows reports it as st_ctime, so it must match
+    /// the copied index too, or the first `git status` rehashes every file.
+    created: Option<SystemTime>,
     readonly: bool,
 }
 
 /// Create `to` with `from`'s contents, mtime and read-only flag, using one handle.
 /// Returns whether the contents were cloned (vs written).
 ///
-/// The git index compares mtime + size (with `core.checkStat=minimal`), so the
-/// mtime must survive the clone.
+/// The copied index holds the template's stat data (mtime, ctime, size), so both
+/// times must survive the clone for git to trust it without rehashing.
 fn materialize(provider: &dyn CloneProvider, from: &Path, to: &Path, e: &FileEntry, clone_min: u64) -> io::Result<bool> {
     let dst = fs::OpenOptions::new().write(true).create_new(true).open(to)?;
     let mut cloned = false;
@@ -222,13 +231,23 @@ fn materialize(provider: &dyn CloneProvider, from: &Path, to: &Path, e: &FileEnt
     } else {
         write_contents(from, &dst, e.len)?;
     }
-    dst.set_modified(e.mtime)?;
+    dst.set_times(file_times(e))?;
     if e.readonly {
         let mut perms = dst.metadata()?.permissions();
         perms.set_readonly(true);
         dst.set_permissions(perms)?;
     }
     Ok(cloned)
+}
+
+fn file_times(e: &FileEntry) -> fs::FileTimes {
+    let t = fs::FileTimes::new().set_modified(e.mtime);
+    #[cfg(windows)]
+    if let Some(c) = e.created {
+        use std::os::windows::fs::FileTimesExt;
+        return t.set_created(c);
+    }
+    t
 }
 
 /// Wall time per file (µs) to create, write, timestamp and close `n` 16 KiB files

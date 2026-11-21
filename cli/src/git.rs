@@ -29,6 +29,26 @@ pub fn capture(dir: Option<&Path>, args: &[&str]) -> Option<String> {
     out.status.success().then_some(s)
 }
 
+/// Run git in `dir`; trimmed stdout on success, an error carrying stderr otherwise.
+pub fn run<S: AsRef<std::ffi::OsStr>>(dir: &Path, args: &[S]) -> anyhow::Result<String> {
+    let out = git().arg("-C").arg(dir).args(args).output()?;
+    if !out.status.success() {
+        let shown: Vec<_> = args.iter().map(|a| a.as_ref().to_string_lossy().into_owned()).collect();
+        anyhow::bail!(
+            "git {} failed in {}:\n{}",
+            shown.join(" "),
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// A path git printed (`C:/x/y` on Windows), in native form.
+pub fn native_path(s: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(if cfg!(windows) { s.replace('/', "\\") } else { s.to_string() })
+}
+
 /// Raw `git --version` output, e.g. `git version 2.56.1.windows.1`.
 pub fn version_string() -> Option<String> {
     capture(None, &["--version"])

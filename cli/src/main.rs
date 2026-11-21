@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use copse::clone;
-use copse::commands::doctor;
+use copse::commands::{doctor, new};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -13,6 +13,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Create a warm workspace by cloning a template worktree.
+    New(new::Args),
     /// Check the filesystem, clone support and Git for this repo.
     Doctor(doctor::Args),
     /// Developer tools.
@@ -41,6 +43,7 @@ enum Debug {
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
+        Cmd::New(args) => new::run(args)?,
         Cmd::Doctor(args) => {
             if !doctor::run(args)? {
                 std::process::exit(1);

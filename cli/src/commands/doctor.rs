@@ -72,8 +72,7 @@ pub fn run(args: Args) -> Result<bool> {
     };
     let repo = match git::capture(Some(&start), &["rev-parse", "--show-toplevel"]) {
         Some(top) => {
-            // git prints `C:/x/y` on Windows; normalize so paths don't mix separators.
-            let top = PathBuf::from(if cfg!(windows) { top.replace('/', "\\") } else { top });
+            let top = git::native_path(&top);
             r.line(Level::Ok, "repo", top.display().to_string());
             top
         }

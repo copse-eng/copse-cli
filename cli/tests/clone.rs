@@ -57,6 +57,8 @@ fn check_tree(src: &Path, dst: &Path, symlinks: bool) {
         assert_eq!(fs::read(src.join(f)).unwrap(), fs::read(dst.join(f)).unwrap(), "{f}");
         let (ms, md) = (fs::metadata(src.join(f)).unwrap(), fs::metadata(dst.join(f)).unwrap());
         assert_eq!(ms.modified().unwrap(), md.modified().unwrap(), "mtime of {f}");
+        #[cfg(windows)]
+        assert_eq!(ms.created().unwrap(), md.created().unwrap(), "creation time of {f}");
     }
     assert!(!dst.join(".git").exists(), ".git should be skipped");
     assert!(fs::metadata(dst.join("readonly.txt")).unwrap().permissions().readonly());
