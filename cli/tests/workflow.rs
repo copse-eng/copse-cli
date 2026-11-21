@@ -23,6 +23,15 @@ fn ok(o: Output) -> String {
     text(&o)
 }
 
+/// `git status` in a fresh workspace must trust the copied index: if any entry's
+/// stat data mismatched, git would re-check (rehash) it and rewrite the index.
+fn assert_index_trusted(ws: &Path) {
+    let index = PathBuf::from(git(ws, &["rev-parse", "--path-format=absolute", "--git-path", "index"]));
+    let before = fs::read(&index).unwrap();
+    assert_eq!(git(ws, &["status", "--porcelain"]), "");
+    assert!(fs::read(&index).unwrap() == before, "git status rewrote the index: the copied stat data didn't match");
+}
+
 /// Repo with two commits (the second changes Cargo.lock) and a config whose setup
 /// "installs" ignored files. Setup commands work in both cmd and sh, and can run
 /// twice like real ones (pnpm install, cargo fetch).
@@ -74,6 +83,10 @@ fn full_workflow() {
     // new from the template: ignored setup output comes along, status clean.
     let out = ok(copse(&repo, &["new", "feat"]));
     let ws = ws_dir.join("feat");
+    if cfg!(windows) {
+        // Creation-time preservation alone keeps the index valid on Windows.
+        assert_index_trusted(&ws);
+    }
     assert!(ws.join("deps.txt").exists(), "{out}");
     assert!(ws.join("stamp.txt").exists());
     assert_eq!(git(&ws, &["branch", "--show-current"]), "feat");
@@ -107,6 +120,43 @@ fn full_workflow() {
     // warm again: template stays, marker rewritten.
     ok(copse(&repo, &["warm", "--no-fetch"]));
     assert!(ws_dir.join(".template.ready").exists());
+}
+
+/// The Unix stat config (forced here so it runs on every platform): only the
+/// workspace is relaxed; the main worktree and template keep git's full checks.
+#[test]
+fn relaxed_stat_is_per_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (repo, _, _) = repo(tmp.path());
+    ok(copse(&repo, &["init"]));
+    ok(copse(&repo, &["new", "relaxed", "--relaxed-stat"]));
+    let ws = tmp.path().join("app.copse").join("relaxed");
+    let tmpl = tmp.path().join("app.copse").join(".template");
+
+    assert_eq!(git(&repo, &["config", "--local", "--get", "extensions.worktreeConfig"]), "true");
+    assert_eq!(git(&ws, &["config", "--get", "core.checkStat"]), "minimal");
+    assert_eq!(git(&ws, &["config", "--get", "core.trustctime"]), "false");
+    for other in [&repo, &tmpl] {
+        let out = Command::new("git").arg("-C").arg(other).args(["config", "--get", "core.checkStat"]).output().unwrap();
+        assert!(!out.status.success(), "core.checkStat leaked into {}", other.display());
+    }
+    assert_index_trusted(&ws);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_needs_no_stat_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (repo, _, _) = repo(tmp.path());
+    ok(copse(&repo, &["init"]));
+    ok(copse(&repo, &["new", "plain"]));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["config", "--local", "--get", "extensions.worktreeConfig"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "creation-time preservation should make the extension unnecessary");
 }
 
 #[test]

@@ -52,6 +52,40 @@ pub struct Args {
     /// Skip `new.post_create` hooks.
     #[arg(long)]
     pub no_hooks: bool,
+    /// Force the Unix stat config (checkStat=minimal) on any platform. For testing.
+    #[arg(long, hide = true)]
+    pub relaxed_stat: bool,
+}
+
+/// On Unix a cloned file always gets a new inode and ctime, which git compares
+/// against the copied index, so the first `git status` would rehash every file.
+/// Windows avoids that by restoring creation time (git's st_ctime there).
+/// Planned replacement: write the new inode/ctime into the index (docs/plan.md, M3).
+fn needs_relaxed_stat() -> bool {
+    !cfg!(windows)
+}
+
+/// Make git in `dest` compare only mtime, size and mode, which survive the clone.
+/// The settings go in the workspace's own config, so the main worktree and the
+/// template keep git's full checks.
+fn set_relaxed_stat(main: &Path, dest: &Path) -> Result<()> {
+    // With worktreeConfig on, these shared settings would apply to every worktree
+    // (git-worktree(1), "Configuration file"). Rare outside bare-repo setups.
+    let worktree = git::run(main, &["config", "--local", "--get", "core.worktree"]).unwrap_or_default();
+    let bare = git::run(main, &["config", "--local", "--get", "core.bare"]).unwrap_or_default();
+    if !worktree.is_empty() || bare == "true" {
+        bail!(
+            "this repo sets core.worktree or core.bare=true in its shared config, which \
+             extensions.worktreeConfig would apply to every worktree. Move them to \
+             .git/config.worktree first (see `git help worktree`)"
+        );
+    }
+    if git::run(main, &["config", "--local", "--get", "extensions.worktreeConfig"]).ok().as_deref() != Some("true") {
+        git::run(main, &["config", "--local", "extensions.worktreeConfig", "true"])?;
+    }
+    git::run(dest, &["config", "--worktree", "core.checkStat", "minimal"])?;
+    git::run(dest, &["config", "--worktree", "core.trustctime", "false"])?;
+    Ok(())
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -127,7 +161,7 @@ pub fn run(args: Args) -> Result<()> {
         commit.as_ref(),
     ])?;
 
-    let report = match populate(&args, &target, &template, &tmpl_gitdir, &dest, &commit, provider.as_ref(), &skip, &p.config.new.fix_paths) {
+    let report = match populate(&args, &target, &template, &tmpl_gitdir, &dest, &commit, provider.as_ref(), &skip, &p.config.new.fix_paths, &p.main) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("✗ failed, removing {}", dest.display());
@@ -188,6 +222,7 @@ fn populate(
     provider: &dyn clone::CloneProvider,
     skip: &(dyn Fn(&Path) -> bool + Sync),
     fix_paths: &[String],
+    main: &Path,
 ) -> Result<Report> {
     // 2. Files. `skip` always covers the template's `.git` file (it points at the
     // template's own admin dir; the new worktree already has its own).
@@ -196,9 +231,12 @@ fn populate(
     let fixup = clone::Fixup::new(&globs, template, dest)?;
     let stats = clone::clone_tree(provider, template, dest, skip, Some(&fixup))?;
 
-    // 3. Index.
+    // 3. Index, plus (Unix) the config that lets git trust it.
     let dest_gitdir = git::native_path(&git::run(dest, &["rev-parse", "--absolute-git-dir"])?);
     fs::copy(tmpl_gitdir.join("index"), dest_gitdir.join("index")).context("copying the template's index")?;
+    if args.relaxed_stat || needs_relaxed_stat() {
+        set_relaxed_stat(main, dest)?;
+    }
 
     // 4. Target.
     let changed: Vec<String> = if target == commit {
