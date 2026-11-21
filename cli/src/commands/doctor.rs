@@ -128,9 +128,12 @@ pub fn run(args: Args) -> Result<bool> {
             format!(
                 "{us:.0} µs/file, likely antivirus scanning every new file (copse clones every file to compensate). {}",
                 if cfg!(windows) {
-                    "Exclude the workspaces folder from Defender (admin: Add-MpPreference -ExclusionPath <dir>) or enable Dev Drive performance mode"
+                    format!(
+                        "Exclude the workspaces folder (or the whole Dev Drive) from Defender                          (admin: Add-MpPreference -ExclusionPath '{}'), or enable Dev Drive performance mode",
+                        target.display()
+                    )
                 } else {
-                    "Check for antivirus or file watchers on this volume"
+                    "Check for antivirus or file watchers on this volume".to_string()
                 }
             ),
         ),
@@ -149,9 +152,12 @@ pub fn run(args: Args) -> Result<bool> {
     Ok(r.fails == 0)
 }
 
+/// `workspaces_dir` from .copse.toml when this is a repo, else `../<name>.copse`.
 fn default_target(repo: &Path) -> PathBuf {
-    let name = repo.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "repo".into());
-    repo.parent().unwrap_or(repo).join(format!("{name}.copse"))
+    match crate::config::Project::discover(repo) {
+        Ok(p) => p.workspaces_dir,
+        Err(_) => crate::config::default_workspaces_dir(repo),
+    }
 }
 
 fn volume_line(r: &mut Report, label: &str, path: &Path) -> Option<volume::VolumeInfo> {

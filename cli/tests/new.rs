@@ -11,7 +11,8 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 fn copse(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_copse")).args(args).output().unwrap()
+    // Run from a neutral directory: with --template, the template decides the repo.
+    Command::new(env!("CARGO_BIN_EXE_copse")).args(args).current_dir(std::env::temp_dir()).output().unwrap()
 }
 
 /// Repo with two commits, and a template worktree at the first one that has an

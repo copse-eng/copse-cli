@@ -8,10 +8,12 @@
 //! cloned: setting up a block clone costs more than writing a few KB.
 
 mod copy;
+pub mod fixup;
 #[cfg(windows)]
 mod refs;
 
 pub use copy::Copy;
+pub use fixup::Fixup;
 #[cfg(windows)]
 pub use refs::Refs;
 
@@ -58,11 +60,11 @@ pub trait CloneProvider: Sync {
 
 /// All providers, best first. [`Copy`] is last and always supported.
 pub fn providers() -> Vec<Box<dyn CloneProvider>> {
-    let mut v: Vec<Box<dyn CloneProvider>> = Vec::new();
-    #[cfg(windows)]
-    v.push(Box::new(Refs));
-    v.push(Box::new(Copy));
-    v
+    vec![
+        #[cfg(windows)]
+        Box::new(Refs),
+        Box::new(Copy),
+    ]
 }
 
 /// The best supported provider, plus why each better one was rejected.
@@ -88,6 +90,8 @@ pub struct Stats {
     pub cloned: u64,
     /// Files that were byte-copied (Copy provider, small files, or per-file fallback).
     pub copied: u64,
+    /// Files whose absolute paths were rewritten by the fixup.
+    pub rewritten: u64,
     /// Files at least this big were cloned; smaller ones written.
     pub clone_min_bytes: u64,
     /// Result of the write probe that chose `clone_min_bytes` (µs per small file).
@@ -100,11 +104,13 @@ pub struct Stats {
 /// `skip` gets paths relative to `src`; a skipped directory is not descended.
 /// Symlinks and junctions are recreated, not followed; absolute targets that
 /// point inside `src` are rebased onto `dst` so the clone is self-contained.
+/// Files matching `fixup` get absolute `src` paths in their content rewritten.
 pub fn clone_tree(
     provider: &dyn CloneProvider,
     src: &Path,
     dst: &Path,
     skip: &(dyn Fn(&Path) -> bool + Sync),
+    fixup: Option<&Fixup>,
 ) -> Result<Stats> {
     let start = Instant::now();
     let src = std::path::absolute(src)?;
@@ -173,10 +179,17 @@ pub fn clone_tree(
     let bytes = AtomicU64::new(0);
     let cloned = AtomicU64::new(0);
     let copied = AtomicU64::new(0);
+    let rewritten = AtomicU64::new(0);
     files.par_iter().try_for_each(|e| -> Result<()> {
         let (from, to) = (src.join(&e.rel), dst.join(&e.rel));
-        let was_cloned = materialize(provider, &from, &to, e, clone_min_bytes).with_context(|| format!("cloning {}", from.display()))?;
-        if was_cloned { &cloned } else { &copied }.fetch_add(1, Ordering::Relaxed);
+        let fix = fixup.filter(|f| f.matches(&e.rel));
+        let how = materialize(provider, &from, &to, e, clone_min_bytes, fix).with_context(|| format!("cloning {}", from.display()))?;
+        match how {
+            How::Cloned => &cloned,
+            How::Written => &copied,
+            How::Rewritten => &rewritten,
+        }
+        .fetch_add(1, Ordering::Relaxed);
         bytes.fetch_add(e.len, Ordering::Relaxed);
         Ok(())
     })?;
@@ -194,6 +207,7 @@ pub fn clone_tree(
         bytes: bytes.into_inner(),
         cloned: cloned.into_inner(),
         copied: copied.into_inner(),
+        rewritten: rewritten.into_inner(),
         clone_min_bytes,
         write_probe_us,
         elapsed: start.elapsed(),
@@ -210,18 +224,39 @@ struct FileEntry {
     readonly: bool,
 }
 
+enum How {
+    Cloned,
+    Written,
+    Rewritten,
+}
+
 /// Create `to` with `from`'s contents, mtime and read-only flag, using one handle.
-/// Returns whether the contents were cloned (vs written).
 ///
 /// The copied index holds the template's stat data (mtime, ctime, size), so both
 /// times must survive the clone for git to trust it without rehashing.
-fn materialize(provider: &dyn CloneProvider, from: &Path, to: &Path, e: &FileEntry, clone_min: u64) -> io::Result<bool> {
+fn materialize(
+    provider: &dyn CloneProvider,
+    from: &Path,
+    to: &Path,
+    e: &FileEntry,
+    clone_min: u64,
+    fixup: Option<&Fixup>,
+) -> io::Result<How> {
     let dst = fs::OpenOptions::new().write(true).create_new(true).open(to)?;
-    let mut cloned = false;
-    if provider.is_cow() && e.len >= clone_min {
+    let mut how = How::Written;
+    if let Some(f) = fixup {
+        let data = fs::read(from)?;
+        match f.apply(&data) {
+            Some(fixed) => {
+                (&dst).write_all(&fixed)?;
+                how = How::Rewritten;
+            }
+            None => (&dst).write_all(&data)?,
+        }
+    } else if provider.is_cow() && e.len >= clone_min {
         let src = File::open(from)?;
         if provider.clone_file(&src, &dst).is_ok() {
-            cloned = true;
+            how = How::Cloned;
         } else {
             // A file the filesystem refuses to clone shouldn't fail the whole
             // tree: start over on the same handle and copy it.
@@ -237,7 +272,7 @@ fn materialize(provider: &dyn CloneProvider, from: &Path, to: &Path, e: &FileEnt
         perms.set_readonly(true);
         dst.set_permissions(perms)?;
     }
-    Ok(cloned)
+    Ok(how)
 }
 
 fn file_times(e: &FileEntry) -> fs::FileTimes {

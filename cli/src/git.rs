@@ -5,17 +5,23 @@ use std::process::Command;
 
 pub const MIN_VERSION: (u32, u32, u32) = (2, 38, 0);
 
-/// A `git` command with cargo/rustup env stripped, so `cargo run` doesn't leak
-/// toolchain settings into hooks or nested builds.
+/// A `git` command with a clean environment (see [`clean_env`]).
 pub fn git() -> Command {
     let mut c = Command::new("git");
+    clean_env(&mut c);
+    c
+}
+
+/// Strip cargo/rustup variables, so running copse via `cargo run` doesn't leak
+/// toolchain settings into git hooks or a repo's own setup commands (e.g. override
+/// its rust-toolchain pin).
+pub fn clean_env(c: &mut Command) {
     for (k, _) in std::env::vars_os() {
         let k = k.to_string_lossy();
         if (k.starts_with("CARGO") && k != "CARGO_HOME") || k == "RUSTUP_TOOLCHAIN" {
             c.env_remove(k.as_ref());
         }
     }
-    c
 }
 
 /// Trimmed stdout of a successful git command in `dir`, or None.

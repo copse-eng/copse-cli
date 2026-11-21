@@ -89,7 +89,7 @@ fn link_target(p: &Path) -> PathBuf {
 fn run(provider: &dyn CloneProvider, root: &Path) -> clone::Stats {
     let (src, dst, outside) = (root.join("src"), root.join("dst"), root.join("outside"));
     let symlinks = build_tree(&src, &outside);
-    let stats = clone_tree(provider, &src, &dst, &|rel| rel == Path::new(".git")).unwrap();
+    let stats = clone_tree(provider, &src, &dst, &|rel| rel == Path::new(".git"), None).unwrap();
     check_tree(&src, &dst, symlinks);
     assert_eq!(stats.files, 6);
     stats
@@ -109,7 +109,7 @@ fn refuses_non_empty_destination() {
     fs::create_dir_all(&src).unwrap();
     fs::create_dir_all(&dst).unwrap();
     fs::write(dst.join("x"), "").unwrap();
-    assert!(clone_tree(&clone::Copy, &src, &dst, &|_| false).is_err());
+    assert!(clone_tree(&clone::Copy, &src, &dst, &|_| false, None).is_err());
 }
 
 /// Needs a ReFS / Dev Drive folder: `COPSE_TEST_REFS_DIR=E:\copse-test cargo test -p copse -- --ignored`

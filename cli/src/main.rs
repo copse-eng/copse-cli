@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use copse::clone;
-use copse::commands::{doctor, new};
+use copse::commands::{doctor, init, list, new, rm, warm};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -13,8 +13,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Create a warm workspace by cloning a template worktree.
+    /// Set up this repo: write .copse.toml and build the warm template.
+    Init(init::Args),
+    /// Refresh the template: fetch, check out `base`, run setup.
+    Warm(warm::Args),
+    /// Create a workspace by cloning the warm template.
     New(new::Args),
+    /// List workspaces.
+    List(list::Args),
+    /// Remove a workspace.
+    Rm(rm::Args),
     /// Check the filesystem, clone support and Git for this repo.
     Doctor(doctor::Args),
     /// Developer tools.
@@ -43,7 +51,11 @@ enum Debug {
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
+        Cmd::Init(args) => init::run(args)?,
+        Cmd::Warm(args) => warm::run(args)?,
         Cmd::New(args) => new::run(args)?,
+        Cmd::List(args) => list::run(args)?,
+        Cmd::Rm(args) => rm::run(args)?,
         Cmd::Doctor(args) => {
             if !doctor::run(args)? {
                 std::process::exit(1);
@@ -60,7 +72,7 @@ fn main() -> Result<()> {
                 p
             };
             // Never clone the source's top-level `.git`: it belongs to the source worktree.
-            let s = clone::clone_tree(provider.as_ref(), &src, &dst, &|rel| rel == std::path::Path::new(".git"))?;
+            let s = clone::clone_tree(provider.as_ref(), &src, &dst, &|rel| rel == std::path::Path::new(".git"), None)?;
             if let Some(us) = s.write_probe_us {
                 let how = if s.clone_min_bytes == 0 {
                     "clone all files".to_string()
